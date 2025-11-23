@@ -1,0 +1,1044 @@
+-- 玩家自瞄UI（优化版 - 防重置 & 文本框输入）
+-- Author: 白皙uwu
+-- 优化版：防止角色重置、列表式UI、简化隔墙检测、参数无限制、文本框输入
+-- 设置储存位置：自定义位置
+--==================================================
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+-- 使用全局表保存设置，避免重置
+local Settings = {
+    aimbotEnabled = false,
+    wallCheckEnabled = false,
+    rightClickEnabled = false,
+    maxDistance = 100,
+    fovRadius = 150,
+    -- 自瞄速度和力度设置
+    aimSpeed = 15,
+    aimStrength = 1.5,
+    smoothAiming = true,
+    -- 目标选择设置
+    targetPlayers = true,
+    targetNPCs = false,
+    -- 右键自瞄模式
+    rightClickMode = "hold", -- "hold": 按住, "toggle": 切换, "hybrid": 混合模式
+    -- UI状态
+    uiVisible = true,
+    uiMinimized = false,
+    -- 新增：穿透设置
+    penetrateWalls = false, -- 是否穿透可穿透的墙
+    penetrateGlass = true   -- 是否穿透玻璃
+}
+
+-- 全局变量引用
+local aimbotGUI = nil
+local mainPanel = nil
+local minimizeButton = nil
+local Circle = nil
+
+-- 自瞄相关变量
+local rightClickAimbot = false
+local rightClickToggled = false
+local currentTarget = nil
+local lastAimTime = 0
+local lastRightClickTime = 0
+local rightClickCooldown = 0.3 -- 右键冷却时间，避免快速切换
+
+-- 自定义设置储存位置
+local SettingsManager = {
+    -- 选择你想要的储存位置：
+    -- 1. "player_data" - 玩家数据文件夹
+    -- 2. "workspace" - 工作区
+    -- 3. "lighting" - 光照
+    -- 4. "replicated_storage" - 复制储存
+    -- 5. "server_storage" - 服务器储存
+    storageLocation = "workspace",
+    
+    init = function(self)
+        print("💾 设置储存位置: " .. self.storageLocation)
+    end,
+    
+    saveSettings = function(self)
+        local success, result = pcall(function()
+            -- 根据选择的储存位置保存设置
+            if self.storageLocation == "player_data" then
+                -- 方法1: 保存到玩家数据
+                if _G.AimbotSettings then
+                    _G.AimbotSettings = nil -- 清除旧数据
+                end
+                _G.AimbotSettings = table.clone(Settings)
+                
+            elseif self.storageLocation == "workspace" then
+                -- 方法2: 保存到工作区
+                local storage = workspace:FindFirstChild("AimbotSettings")
+                if storage then
+                    storage:Destroy()
+                end
+                
+                storage = Instance.new("Folder")
+                storage.Name = "AimbotSettings"
+                
+                for key, value in pairs(Settings) do
+                    local valueObj = Instance.new("StringValue")
+                    valueObj.Name = key
+                    valueObj.Value = tostring(value)
+                    valueObj.Parent = storage
+                end
+                storage.Parent = workspace
+                
+            elseif self.storageLocation == "lighting" then
+                -- 方法3: 保存到光照
+                local lighting = game:GetService("Lighting")
+                local storage = lighting:FindFirstChild("AimbotSettings")
+                if storage then
+                    storage:Destroy()
+                end
+                
+                storage = Instance.new("Folder")
+                storage.Name = "AimbotSettings"
+                
+                for key, value in pairs(Settings) do
+                    local valueObj = Instance.new("StringValue")
+                    valueObj.Name = key
+                    valueObj.Value = tostring(value)
+                    valueObj.Parent = storage
+                end
+                storage.Parent = lighting
+                
+            elseif self.storageLocation == "replicated_storage" then
+                -- 方法4: 保存到复制储存
+                local rs = game:GetService("ReplicatedStorage")
+                local storage = rs:FindFirstChild("AimbotSettings")
+                if storage then
+                    storage:Destroy()
+                end
+                
+                storage = Instance.new("Folder")
+                storage.Name = "AimbotSettings"
+                
+                for key, value in pairs(Settings) do
+                    local valueObj = Instance.new("StringValue")
+                    valueObj.Name = key
+                    valueObj.Value = tostring(value)
+                    valueObj.Parent = storage
+                end
+                storage.Parent = rs
+                
+            elseif self.storageLocation == "server_storage" then
+                -- 方法5: 保存到服务器储存
+                local ss = game:GetService("ServerStorage")
+                local storage = ss:FindFirstChild("AimbotSettings")
+                if storage then
+                    storage:Destroy()
+                end
+                
+                storage = Instance.new("Folder")
+                storage.Name = "AimbotSettings"
+                
+                for key, value in pairs(Settings) do
+                    local valueObj = Instance.new("StringValue")
+                    valueObj.Name = key
+                    valueObj.Value = tostring(value)
+                    valueObj.Parent = storage
+                end
+                storage.Parent = ss
+            end
+            
+            return true
+        end)
+        
+        if success then
+            print("✅ 设置保存成功 - 位置: " .. self.storageLocation)
+        else
+            print("❌ 设置保存失败: " .. tostring(result))
+        end
+    end,
+    
+    loadSettings = function(self)
+        local success, result = pcall(function()
+            if self.storageLocation == "player_data" then
+                -- 从玩家数据加载
+                if _G.AimbotSettings then
+                    for key, value in pairs(_G.AimbotSettings) do
+                        if Settings[key] ~= nil then
+                            -- 类型转换
+                            if type(Settings[key]) == "boolean" then
+                                Settings[key] = (value == true or value == "true")
+                            elseif type(Settings[key]) == "number" then
+                                Settings[key] = tonumber(value) or Settings[key]
+                            else
+                                Settings[key] = value
+                            end
+                        end
+                    end
+                end
+                
+            elseif self.storageLocation == "workspace" then
+                -- 从工作区加载
+                local storage = workspace:FindFirstChild("AimbotSettings")
+                if storage then
+                    for _, valueObj in pairs(storage:GetChildren()) do
+                        if Settings[valueObj.Name] ~= nil then
+                            local value = valueObj.Value
+                            if type(Settings[valueObj.Name]) == "boolean" then
+                                Settings[valueObj.Name] = (value == "true")
+                            elseif type(Settings[valueObj.Name]) == "number" then
+                                Settings[valueObj.Name] = tonumber(value) or Settings[valueObj.Name]
+                            else
+                                Settings[valueObj.Name] = value
+                            end
+                        end
+                    end
+                end
+                
+            elseif self.storageLocation == "lighting" then
+                -- 从光照加载
+                local lighting = game:GetService("Lighting")
+                local storage = lighting:FindFirstChild("AimbotSettings")
+                if storage then
+                    for _, valueObj in pairs(storage:GetChildren()) do
+                        if Settings[valueObj.Name] ~= nil then
+                            local value = valueObj.Value
+                            if type(Settings[valueObj.Name]) == "boolean" then
+                                Settings[valueObj.Name] = (value == "true")
+                            elseif type(Settings[valueObj.Name]) == "number" then
+                                Settings[valueObj.Name] = tonumber(value) or Settings[valueObj.Name]
+                            else
+                                Settings[valueObj.Name] = value
+                            end
+                        end
+                    end
+                end
+                
+            elseif self.storageLocation == "replicated_storage" then
+                -- 从复制储存加载
+                local rs = game:GetService("ReplicatedStorage")
+                local storage = rs:FindFirstChild("AimbotSettings")
+                if storage then
+                    for _, valueObj in pairs(storage:GetChildren()) do
+                        if Settings[valueObj.Name] ~= nil then
+                            local value = valueObj.Value
+                            if type(Settings[valueObj.Name]) == "boolean" then
+                                Settings[valueObj.Name] = (value == "true")
+                            elseif type(Settings[valueObj.Name]) == "number" then
+                                Settings[valueObj.Name] = tonumber(value) or Settings[valueObj.Name]
+                            else
+                                Settings[valueObj.Name] = value
+                            end
+                        end
+                    end
+                end
+                
+            elseif self.storageLocation == "server_storage" then
+                -- 从服务器储存加载
+                local ss = game:GetService("ServerStorage")
+                local storage = ss:FindFirstChild("AimbotSettings")
+                if storage then
+                    for _, valueObj in pairs(storage:GetChildren()) do
+                        if Settings[valueObj.Name] ~= nil then
+                            local value = valueObj.Value
+                            if type(Settings[valueObj.Name]) == "boolean" then
+                                Settings[valueObj.Name] = (value == "true")
+                            elseif type(Settings[valueObj.Name]) == "number" then
+                                Settings[valueObj.Name] = tonumber(value) or Settings[valueObj.Name]
+                            else
+                                Settings[valueObj.Name] = value
+                            end
+                        end
+                    end
+                end
+            end
+            
+            return true
+        end)
+        
+        if success then
+            print("✅ 设置加载成功 - 位置: " .. self.storageLocation)
+        else
+            print("❌ 设置加载失败: " .. tostring(result))
+        end
+    end,
+    
+    autoSave = function(self)
+        self:saveSettings()
+    end
+}
+
+-- 初始化设置管理器
+SettingsManager:init()
+
+-- 检查物体是否可穿透
+local function isPartPenetrable(part)
+    if not part then return false end
+    
+    -- 检查材质
+    local material = part.Material
+    local penetrableMaterials = {
+        Enum.Material.Plastic,
+        Enum.Material.Glass,
+        Enum.Material.Water,
+        Enum.Material.Ice,
+        Enum.Material.SmoothPlastic,
+        Enum.Material.Neon,
+        Enum.Material.ForceField
+    }
+    
+    -- 检查名称关键词
+    local partName = part.Name:lower()
+    local penetrableNames = {
+        "glass", "window", "pane", "transparent", "see", "through",
+        "forcefield", "shield", "barrier", "energy"
+    }
+    
+    -- 检查透明度
+    local isTransparent = part.Transparency > 0.5
+    
+    -- 检查是否可碰撞
+    local isCollidable = part.CanCollide == false
+    
+    -- 如果是玻璃材质且开启玻璃穿透
+    if Settings.penetrateGlass and material == Enum.Material.Glass then
+        return true
+    end
+    
+    -- 检查材质
+    for _, penetrableMaterial in ipairs(penetrableMaterials) do
+        if material == penetrableMaterial then
+            return true
+        end
+    end
+    
+    -- 检查名称
+    for _, nameKeyword in ipairs(penetrableNames) do
+        if string.find(partName, nameKeyword) then
+            return true
+        end
+    end
+    
+    -- 检查透明度和碰撞
+    if isTransparent or isCollidable then
+        return true
+    end
+    
+    return false
+end
+
+-- 简化的隔墙检测函数（支持穿透）
+local function isTargetVisible(targetPosition, targetCharacter)
+    if not Settings.wallCheckEnabled then
+        return true
+    end
+    
+    local cameraPosition = Camera.CFrame.Position
+    local direction = (targetPosition - cameraPosition).Unit
+    local distance = (targetPosition - cameraPosition).Magnitude
+    
+    -- 简化的射线检测
+    local ray = Ray.new(cameraPosition, direction * distance)
+    local hitPart, hitPosition = workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character}, false, true)
+    
+    -- 如果没有命中任何物体，则认为可见
+    if not hitPart then
+        return true
+    end
+    
+    -- 检查是否命中了目标角色
+    if targetCharacter and hitPart:IsDescendantOf(targetCharacter) then
+        return true
+    end
+    
+    -- 如果开启了穿透功能，检查命中的物体是否可穿透
+    if Settings.penetrateWalls then
+        if isPartPenetrable(hitPart) then
+            return true  -- 可穿透的物体，认为目标可见
+        end
+    end
+    
+    return false  -- 被不可穿透的物体遮挡
+end
+
+-- 获取所有有效目标
+local function getValidTargets()
+    local targets = {}
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return targets end
+
+    -- 获取玩家目标
+    if Settings.targetPlayers then
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+                local head = player.Character:FindFirstChild("Head")
+                
+                if humanoid and humanoid.Health > 0 and head then
+                    local distToPlayer = (hrp.Position - head.Position).Magnitude
+                    -- 移除距离限制
+                    table.insert(targets, {
+                        object = head,
+                        position = head.Position,
+                        type = "player",
+                        player = player,
+                        character = player.Character,
+                        distance = distToPlayer
+                    })
+                end
+            end
+        end
+    end
+
+    -- 获取NPC目标
+    if Settings.targetNPCs then
+        for _, npc in pairs(workspace:GetDescendants()) do
+            if npc:FindFirstChild("Humanoid") and npc:FindFirstChild("Head") then
+                local humanoid = npc.Humanoid
+                local head = npc.Head
+                
+                -- 检查是否是NPC（不是玩家角色）
+                local isPlayerCharacter = false
+                for _, player in pairs(Players:GetPlayers()) do
+                    if player.Character == npc then
+                        isPlayerCharacter = true
+                        break
+                    end
+                end
+                
+                if not isPlayerCharacter and humanoid.Health > 0 then
+                    local distToNPC = (hrp.Position - head.Position).Magnitude
+                    -- 移除距离限制
+                    table.insert(targets, {
+                        object = head,
+                        position = head.Position,
+                        type = "npc",
+                        character = npc,
+                        distance = distToNPC
+                    })
+                end
+            end
+        end
+    end
+
+    return targets
+end
+
+-- 获取最近目标
+local function getClosestTarget()
+    local closest = nil
+    local closestDist = math.huge
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    
+    local targets = getValidTargets()
+    
+    for _, target in ipairs(targets) do
+        local screenPos, onScreen = Camera:WorldToViewportPoint(target.position)
+        
+        if onScreen then
+            -- 应用最大距离过滤（可选）
+            if Settings.maxDistance > 0 and target.distance > Settings.maxDistance then
+                continue
+            end
+            
+            -- 简化的隔墙检测（支持穿透）
+            local visible = isTargetVisible(target.position, target.character)
+            
+            if visible then
+                local distToCenter = (screenCenter - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+                if distToCenter <= Settings.fovRadius and distToCenter < closestDist then
+                    closest = target
+                    closestDist = distToCenter
+                end
+            end
+        end
+    end
+    
+    return closest
+end
+
+-- 创建带文本框的列表项
+local function createListItemWithInput(parent, label, valueType, settingKey, options)
+    local itemFrame = Instance.new("Frame")
+    itemFrame.Size = UDim2.new(1, -20, 0, 60)
+    itemFrame.Position = UDim2.new(0, 10, 0, 0)
+    itemFrame.BackgroundTransparency = 1
+    itemFrame.Parent = parent
+
+    -- 标签
+    local labelText = Instance.new("TextLabel")
+    labelText.Size = UDim2.new(0.6, -5, 0, 20)
+    labelText.Position = UDim2.new(0, 0, 0, 0)
+    labelText.BackgroundTransparency = 1
+    labelText.Text = label
+    labelText.TextColor3 = Color3.fromRGB(80, 80, 80)
+    labelText.Font = Enum.Font.Gotham
+    labelText.TextSize = 14
+    labelText.TextXAlignment = Enum.TextXAlignment.Left
+    labelText.Parent = itemFrame
+
+    local controlFrame = Instance.new("Frame")
+    controlFrame.Size = UDim2.new(0.4, 0, 1, 0)
+    controlFrame.Position = UDim2.new(0.6, 5, 0, 0)
+    controlFrame.BackgroundTransparency = 1
+    controlFrame.Parent = itemFrame
+
+    -- 文本框
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(1, 0, 0, 25)
+    textBox.Position = UDim2.new(0, 0, 0, 30)
+    textBox.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    textBox.TextColor3 = Color3.fromRGB(0, 0, 0)
+    textBox.Font = Enum.Font.Gotham
+    textBox.TextSize = 12
+    textBox.Text = tostring(Settings[settingKey])
+    textBox.PlaceholderText = "输入数值..."
+    textBox.ClearTextOnFocus = false
+    textBox.Parent = controlFrame
+
+    local textBoxCorner = Instance.new("UICorner")
+    textBoxCorner.CornerRadius = UDim.new(0, 4)
+    textBoxCorner.Parent = textBox
+
+    local textBoxStroke = Instance.new("UIStroke")
+    textBoxStroke.Color = Color3.fromRGB(180, 180, 180)
+    textBoxStroke.Thickness = 1
+    textBoxStroke.Parent = textBox
+
+    -- 文本框输入处理
+    textBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed then
+            local value = tonumber(textBox.Text)
+            if value then
+                local minVal = options and options.min or 0
+                local maxVal = options and options.max or 100
+                
+                if options and options.integer then
+                    value = math.floor(value)
+                end
+                
+                if value >= minVal and value <= maxVal then
+                    Settings[settingKey] = value
+                    textBox.Text = tostring(value)
+                    SettingsManager:autoSave()
+                else
+                    textBox.Text = tostring(Settings[settingKey])
+                end
+            else
+                textBox.Text = tostring(Settings[settingKey])
+            end
+        end
+    end)
+
+    if valueType == "toggle" then
+        -- 切换按钮
+        local toggleBtn = Instance.new("TextButton")
+        toggleBtn.Size = UDim2.new(1, 0, 0, 25)
+        toggleBtn.Position = UDim2.new(0, 0, 0, 0)
+        toggleBtn.BackgroundColor3 = Settings[settingKey] and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
+        toggleBtn.Text = Settings[settingKey] and "开启" or "关闭"
+        toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        toggleBtn.Font = Enum.Font.Gotham
+        toggleBtn.TextSize = 12
+        toggleBtn.Parent = controlFrame
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = toggleBtn
+
+        toggleBtn.MouseButton1Click:Connect(function()
+            Settings[settingKey] = not Settings[settingKey]
+            toggleBtn.BackgroundColor3 = Settings[settingKey] and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(200, 0, 0)
+            toggleBtn.Text = Settings[settingKey] and "开启" or "关闭"
+            SettingsManager:autoSave()
+        end)
+
+    elseif valueType == "slider" then
+        -- 滑块
+        local sliderContainer = Instance.new("Frame")
+        sliderContainer.Size = UDim2.new(1, 0, 0, 25)
+        sliderContainer.Position = UDim2.new(0, 0, 0, 0)
+        sliderContainer.BackgroundTransparency = 1
+        sliderContainer.Parent = controlFrame
+
+        local sliderTrack = Instance.new("Frame")
+        sliderTrack.Size = UDim2.new(1, 0, 0, 6)
+        sliderTrack.Position = UDim2.new(0, 0, 0.5, -3)
+        sliderTrack.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+        sliderTrack.Parent = sliderContainer
+
+        local trackCorner = Instance.new("UICorner")
+        trackCorner.CornerRadius = UDim.new(1, 0)
+        trackCorner.Parent = sliderTrack
+
+        local sliderFill = Instance.new("Frame")
+        local minVal = options and options.min or 0
+        local maxVal = options and options.max or 100
+        local currentVal = math.clamp(Settings[settingKey], minVal, maxVal)
+        local fillRatio = (currentVal - minVal) / (maxVal - minVal)
+        
+        sliderFill.Size = UDim2.new(fillRatio, 0, 1, 0)
+        sliderFill.Position = UDim2.new(0, 0, 0, 0)
+        sliderFill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+        sliderFill.Parent = sliderTrack
+
+        local fillCorner = Instance.new("UICorner")
+        fillCorner.CornerRadius = UDim.new(1, 0)
+        fillCorner.Parent = sliderFill
+
+        local valueText = Instance.new("TextLabel")
+        valueText.Size = UDim2.new(1, 0, 1, 0)
+        valueText.BackgroundTransparency = 1
+        valueText.Text = tostring(Settings[settingKey])
+        valueText.TextColor3 = Color3.fromRGB(80, 80, 80)
+        valueText.Font = Enum.Font.Gotham
+        valueText.TextSize = 12
+        valueText.Parent = sliderContainer
+
+        -- 更新滑块函数
+        local function updateSlider(value)
+            local minVal = options and options.min or 0
+            local maxVal = options and options.max or 100
+            local clampedValue = math.clamp(value, minVal, maxVal)
+            local fillRatio = (clampedValue - minVal) / (maxVal - minVal)
+            
+            sliderFill.Size = UDim2.new(fillRatio, 0, 1, 0)
+            valueText.Text = tostring(clampedValue)
+            textBox.Text = tostring(clampedValue)
+            Settings[settingKey] = clampedValue
+        end
+
+        -- 滑块交互
+        local dragging = false
+        
+        local function handleSliderInput(input)
+            local relativeX = (input.Position.X - sliderTrack.AbsolutePosition.X) / sliderTrack.AbsoluteSize.X
+            relativeX = math.clamp(relativeX, 0, 1)
+            
+            local value = minVal + (relativeX * (maxVal - minVal))
+            if options and options.integer then
+                value = math.floor(value)
+            else
+                value = math.floor(value * 100) / 100
+            end
+            
+            updateSlider(value)
+        end
+
+        sliderTrack.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+                handleSliderInput(input)
+            end
+        end)
+
+        sliderTrack.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = false
+                SettingsManager:autoSave()
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                handleSliderInput(input)
+            end
+        end)
+
+        -- 文本框同步滑块
+        textBox.FocusLost:Connect(function(enterPressed)
+            if enterPressed then
+                local value = tonumber(textBox.Text)
+                if value then
+                    updateSlider(value)
+                    SettingsManager:autoSave()
+                else
+                    textBox.Text = tostring(Settings[settingKey])
+                end
+            end
+        end)
+
+    elseif valueType == "dropdown" then
+        -- 下拉选择
+        local dropdownBtn = Instance.new("TextButton")
+        dropdownBtn.Size = UDim2.new(1, 0, 0, 25)
+        dropdownBtn.Position = UDim2.new(0, 0, 0, 0)
+        dropdownBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+        dropdownBtn.Text = options and options.options[Settings[settingKey]] or Settings[settingKey]
+        dropdownBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        dropdownBtn.Font = Enum.Font.Gotham
+        dropdownBtn.TextSize = 12
+        dropdownBtn.Parent = controlFrame
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = dropdownBtn
+
+        dropdownBtn.MouseButton1Click:Connect(function()
+            if options and options.options then
+                local currentIndex = 1
+                for i, option in ipairs(options.options) do
+                    if option == Settings[settingKey] then
+                        currentIndex = i
+                        break
+                    end
+                end
+                
+                local nextIndex = (currentIndex % #options.options) + 1
+                Settings[settingKey] = options.options[nextIndex]
+                dropdownBtn.Text = options.options[nextIndex]
+                SettingsManager:autoSave()
+            end
+        end)
+    end
+
+    return itemFrame
+end
+
+-- 创建优化的列表式UI
+local function createAimbotGUI()
+    -- 检查是否已存在GUI，避免重复创建
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if playerGui and playerGui:FindFirstChild("PlayerAimbotUI") then
+        return playerGui.PlayerAimbotUI
+    end
+
+    -- 创建ScreenGui
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "PlayerAimbotUI"
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    ScreenGui.ResetOnSpawn = false  -- 关键：防止角色重置时销毁
+    ScreenGui.IgnoreGuiInset = true
+
+    -- 中心绿色圆圈
+    Circle = Instance.new("Frame")
+    Circle.Name = "AimCircle"
+    Circle.AnchorPoint = Vector2.new(0.5, 0.5)
+    Circle.Position = UDim2.new(0.5, 0, 0.5, 0)
+    Circle.Size = UDim2.new(0, Settings.fovRadius * 2, 0, Settings.fovRadius * 2)
+    Circle.BackgroundTransparency = 1
+    Circle.Parent = ScreenGui
+
+    local CircleStroke = Instance.new("UIStroke")
+    CircleStroke.Parent = Circle
+    CircleStroke.Color = Color3.fromRGB(0, 255, 0)
+    CircleStroke.Thickness = 3
+    CircleStroke.Transparency = 0
+
+    local CircleCorner = Instance.new("UICorner")
+    CircleCorner.Parent = Circle
+    CircleCorner.CornerRadius = UDim.new(1, 0)
+
+    -- 主面板
+    mainPanel = Instance.new("Frame")
+    mainPanel.Size = UDim2.new(0, 320, 0, 450) -- 增加高度以容纳新设置
+    mainPanel.Position = UDim2.new(0, 20, 0, 20)
+    mainPanel.BackgroundColor3 = Color3.fromRGB(245, 245, 245)
+    mainPanel.BorderSizePixel = 0
+    mainPanel.Visible = Settings.uiVisible
+    mainPanel.Parent = ScreenGui
+
+    local panelCorner = Instance.new("UICorner", mainPanel)
+    panelCorner.CornerRadius = UDim.new(0, 12)
+
+    local panelShadow = Instance.new("UIStroke")
+    panelShadow.Parent = mainPanel
+    panelShadow.Color = Color3.fromRGB(0, 0, 0)
+    panelShadow.Thickness = 1
+    panelShadow.Transparency = 0.8
+
+    -- 标题栏
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    titleBar.Parent = mainPanel
+
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 12)
+    titleCorner.Parent = titleBar
+
+    local titleText = Instance.new("TextLabel")
+    titleText.Size = UDim2.new(0.8, 0, 1, 0)
+    titleText.Position = UDim2.new(0, 10, 0, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = "智能自瞄系统"
+    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 14
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = titleBar
+
+    -- 窗口控制按钮（只保留最小化按钮）
+    local controlsFrame = Instance.new("Frame")
+    controlsFrame.Size = UDim2.new(0.2, 0, 1, 0)
+    controlsFrame.Position = UDim2.new(0.8, 0, 0, 0)
+    controlsFrame.BackgroundTransparency = 1
+    controlsFrame.Parent = titleBar
+
+    minimizeButton = Instance.new("TextButton")
+    minimizeButton.Size = UDim2.new(0, 20, 0, 20)
+    minimizeButton.Position = UDim2.new(0.5, -10, 0.5, -10)
+    minimizeButton.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+    minimizeButton.Text = "_"
+    minimizeButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+    minimizeButton.Font = Enum.Font.GothamBold
+    minimizeButton.TextSize = 14
+    minimizeButton.Parent = controlsFrame
+
+    local minCorner = Instance.new("UICorner")
+    minCorner.CornerRadius = UDim.new(0, 4)
+    minCorner.Parent = minimizeButton
+
+    -- 内容区域
+    local contentFrame = Instance.new("ScrollingFrame")
+    contentFrame.Size = UDim2.new(1, 0, 1, -30)
+    contentFrame.Position = UDim2.new(0, 0, 0, 30)
+    contentFrame.BackgroundTransparency = 1
+    contentFrame.BorderSizePixel = 0
+    contentFrame.ScrollBarThickness = 4
+    contentFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    contentFrame.Parent = mainPanel
+
+    local contentLayout = Instance.new("UIListLayout")
+    contentLayout.Padding = UDim.new(0, 5)
+    contentLayout.Parent = contentFrame
+
+    -- 创建列表项（带文本框）
+    local yOffset = 10
+    
+    -- 基本设置
+    createListItemWithInput(contentFrame, "自瞄开关", "toggle", "aimbotEnabled")
+    createListItemWithInput(contentFrame, "隔墙检测", "toggle", "wallCheckEnabled")
+    createListItemWithInput(contentFrame, "右键自瞄", "toggle", "rightClickEnabled")
+    createListItemWithInput(contentFrame, "平滑自瞄", "toggle", "smoothAiming")
+    createListItemWithInput(contentFrame, "锁定玩家", "toggle", "targetPlayers")
+    createListItemWithInput(contentFrame, "锁定NPC", "toggle", "targetNPCs")
+    
+    -- 新增：穿透设置
+    createListItemWithInput(contentFrame, "穿透墙壁", "toggle", "penetrateWalls")
+    createListItemWithInput(contentFrame, "穿透玻璃", "toggle", "penetrateGlass")
+    
+    -- 模式选择
+    createListItemWithInput(contentFrame, "右键模式", "dropdown", "rightClickMode", {
+        options = {"hold", "toggle", "hybrid"}
+    })
+    
+    -- 参数设置（无限制 + 文本框）
+    createListItemWithInput(contentFrame, "自瞄速度", "slider", "aimSpeed", {
+        min = 1, max = 100, integer = true
+    })
+    
+    createListItemWithInput(contentFrame, "自瞄力度", "slider", "aimStrength", {
+        min = 0.1, max = 10.0, integer = false
+    })
+    
+    createListItemWithInput(contentFrame, "圆圈大小", "slider", "fovRadius", {
+        min = 10, max = 1000, integer = true
+    })
+    
+    createListItemWithInput(contentFrame, "最大距离", "slider", "maxDistance", {
+        min = 0, max = 5000, integer = true  -- 0表示无限制
+    })
+
+    -- 窗口控制功能（只保留最小化）
+    minimizeButton.MouseButton1Click:Connect(function()
+        Settings.uiMinimized = not Settings.uiMinimized
+        if Settings.uiMinimized then
+            mainPanel.Size = UDim2.new(0, 320, 0, 30)
+            contentFrame.Visible = false
+        else
+            mainPanel.Size = UDim2.new(0, 320, 0, 450)
+            contentFrame.Visible = true
+        end
+        SettingsManager:autoSave()
+    end)
+
+    -- 拖拽功能
+    local dragging, dragInput, dragStart, startPos
+    local function update(input)
+        local delta = input.Position - dragStart
+        local newPosition = UDim2.new(
+            startPos.X.Scale, 
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale, 
+            startPos.Y.Offset + delta.Y
+        )
+        mainPanel.Position = newPosition
+    end
+    
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainPanel.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    
+    titleBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            dragInput = input
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end)
+
+    return ScreenGui
+end
+
+-- 平滑自瞄函数
+local function smoothAim(targetPosition)
+    if not Settings.smoothAiming then
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPosition)
+        return
+    end
+    
+    local currentLook = Camera.CFrame.LookVector
+    local targetDirection = (targetPosition - Camera.CFrame.Position).Unit
+    
+    local dotProduct = currentLook:Dot(targetDirection)
+    local angle = math.acos(math.clamp(dotProduct, -1, 1))
+    
+    local maxAngle = math.rad(180)
+    local speedFactor = Settings.aimSpeed / 30
+    local lerpAlpha = math.min(angle / maxAngle * speedFactor * Settings.aimStrength, 1.0)
+    
+    local newLook = currentLook:Lerp(targetDirection, lerpAlpha).Unit
+    Camera.CFrame = CFrame.new(Camera.CFrame.Position, Camera.CFrame.Position + newLook)
+end
+
+-- 初始化系统
+local function initializeSystem()
+    SettingsManager:loadSettings()
+    
+    -- 检查是否已存在GUI
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if playerGui and playerGui:FindFirstChild("PlayerAimbotUI") then
+        aimbotGUI = playerGui.PlayerAimbotUI
+        print("🔍 检测到现有GUI，无需重新创建")
+    else
+        aimbotGUI = createAimbotGUI()
+        print("✅ 创建新的自瞄GUI")
+    end
+    
+    print("🎯 智能自瞄系统初始化完成")
+    print("📊 当前设置:")
+    print("   • 自瞄: " .. (Settings.aimbotEnabled and "开启" or "关闭"))
+    print("   • 隔墙检测: " .. (Settings.wallCheckEnabled and "开启" or "关闭"))
+    print("   • 右键自瞄: " .. (Settings.rightClickEnabled and "开启" or "关闭"))
+    print("   • 穿透墙壁: " .. (Settings.penetrateWalls and "开启" or "关闭"))
+    print("   • 穿透玻璃: " .. (Settings.penetrateGlass and "开启" or "关闭"))
+    print("   • 右键模式: " .. Settings.rightClickMode)
+    print("   • 锁定玩家: " .. (Settings.targetPlayers and "开启" or "关闭"))
+    print("   • 锁定NPC: " .. (Settings.targetNPCs and "开启" or "关闭"))
+    print("💾 设置储存位置: " .. SettingsManager.storageLocation)
+end
+
+-- 智能右键自瞄控制
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not Settings.rightClickEnabled then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        local currentTime = tick()
+        
+        -- 冷却时间检查
+        if currentTime - lastRightClickTime < rightClickCooldown then
+            return
+        end
+        lastRightClickTime = currentTime
+        
+        if Settings.rightClickMode == "hold" then
+            -- 按住模式：立即开启自瞄
+            rightClickAimbot = true
+        elseif Settings.rightClickMode == "toggle" then
+            -- 切换模式：点击切换状态
+            rightClickToggled = not rightClickToggled
+            rightClickAimbot = rightClickToggled
+        else
+            -- 混合模式：短按切换，长按保持
+            rightClickAimbot = true
+            rightClickToggled = false
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        if Settings.rightClickMode == "hold" then
+            -- 按住模式：释放时关闭
+            rightClickAimbot = false
+        elseif Settings.rightClickMode == "hybrid" then
+            -- 混合模式：如果不是切换状态，释放时关闭
+            if not rightClickToggled then
+                rightClickAimbot = false
+            end
+        end
+        -- 切换模式保持状态不变
+    end
+end)
+
+-- 主自瞄循环
+RunService.RenderStepped:Connect(function()
+    -- 更新圆圈大小
+    if Circle then
+        Circle.Size = UDim2.new(0, Settings.fovRadius * 2, 0, Settings.fovRadius * 2)
+    end
+    
+    local shouldAim = Settings.aimbotEnabled or (Settings.rightClickEnabled and rightClickAimbot)
+    
+    if shouldAim then
+        local target = getClosestTarget()
+        if target then
+            currentTarget = target
+            smoothAim(target.position)
+            lastAimTime = tick()
+        elseif currentTarget and Settings.smoothAiming then
+            if tick() - lastAimTime < 0.5 then
+                smoothAim(currentTarget.position)
+            else
+                currentTarget = nil
+            end
+        end
+    else
+        currentTarget = nil
+        if Settings.rightClickMode == "toggle" then
+            rightClickToggled = false
+            rightClickAimbot = false
+        end
+    end
+end)
+
+-- 自动保存系统
+spawn(function()
+    while true do
+        wait(30)
+        SettingsManager:autoSave()
+    end
+end)
+
+-- 启动系统
+initializeSystem()
+
+print("🚀 智能自瞄系统加载完成！")
+print("📝 右键自瞄模式说明:")
+print("   • 按住模式: 按住右键时自瞄，释放时停止")
+print("   • 切换模式: 点击右键切换自瞄状态")
+print("   • 混合模式: 短按切换，长按保持")
+print("🎯 穿透功能说明:")
+print("   • 穿透墙壁: 可穿透塑料、力场等材质")
+print("   • 穿透玻璃: 专门穿透玻璃材质")
+print("   • 可穿透物体: 玻璃、塑料、力场、水、冰等")
+print("💡 推荐设置:")
+print("   • 开启'穿透玻璃'提高实用性")
+print("   • 根据游戏需求选择是否开启'穿透墙壁'")
+print("🛡️ 系统已防重置，角色死亡不会影响脚本运行")
+print("💾 设置储存位置: " .. SettingsManager.storageLocation)
