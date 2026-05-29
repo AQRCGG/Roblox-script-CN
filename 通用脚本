@@ -1,0 +1,697 @@
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+-- 获取角色 Humanoid
+local humanoid
+local function updateHumanoid()
+	local char = player.Character or player.CharacterAdded:Wait()
+	humanoid = char:WaitForChild("Humanoid")
+end
+updateHumanoid()
+player.CharacterAdded:Connect(updateHumanoid)
+
+-- 创建主 GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "Y3ll0wGUI_CN"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- ================= 主窗口（外层Frame） =================
+local mainWindow = Instance.new("Frame")
+mainWindow.Size = UDim2.new(0, 350, 0, 400)
+mainWindow.Position = UDim2.new(0, 50, 0, -45)
+mainWindow.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+mainWindow.BorderSizePixel = 2
+mainWindow.Active = true
+mainWindow.Parent = gui
+
+-- 标题栏
+local titleBar = Instance.new("TextLabel")
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.Position = UDim2.new(0, 0, 0, 0)
+titleBar.Text = "Y3ll0w 工具 v3 (中文版)"
+titleBar.BackgroundColor3 = Color3.fromRGB(255, 255, 150)
+titleBar.TextColor3 = Color3.new(0, 0, 0)
+titleBar.TextScaled = true
+titleBar.Font = Enum.Font.SourceSansBold
+titleBar.Parent = mainWindow
+
+-- 最小化按钮
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+minimizeBtn.Position = UDim2.new(1, -35, 0, 0)
+minimizeBtn.Text = "—"
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
+minimizeBtn.TextColor3 = Color3.new(0, 0, 0)
+minimizeBtn.TextScaled = true
+minimizeBtn.Font = Enum.Font.SourceSansBold
+minimizeBtn.Parent = titleBar
+
+-- 恢复按钮（常驻，初始隐藏）
+local restoreBtn = Instance.new("TextButton")
+restoreBtn.Size = UDim2.new(0, 40, 0, 40)
+restoreBtn.Position = UDim2.new(0, 10, 0, 10)
+restoreBtn.Text = "≡"
+restoreBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+restoreBtn.TextColor3 = Color3.new(0, 0, 0)
+restoreBtn.TextScaled = true
+restoreBtn.Font = Enum.Font.SourceSansBold
+restoreBtn.Visible = false
+restoreBtn.Parent = gui
+
+-- 最小化/恢复功能
+minimizeBtn.MouseButton1Click:Connect(function()
+	mainWindow.Visible = false
+	restoreBtn.Visible = true
+end)
+restoreBtn.MouseButton1Click:Connect(function()
+	mainWindow.Visible = true
+	restoreBtn.Visible = false
+end)
+
+-- ================= 窗口拖动功能（通过标题栏） =================
+local dragging = true
+local dragStart, windowStartPos
+
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		windowStartPos = mainWindow.Position
+		input:StopPropagation()
+	end
+end)
+
+titleBar.InputChanged:Connect(function(input)
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - dragStart
+		mainWindow.Position = UDim2.new(
+			0, windowStartPos.X.Offset + delta.X,
+			0, windowStartPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+titleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = false
+	end
+end)
+
+-- ================= 窗口调整大小功能（右下角手柄） =================
+local resizeHandle = Instance.new("TextButton")
+resizeHandle.Size = UDim2.new(0, 20, 0, 20)
+resizeHandle.Position = UDim2.new(1, -20, 1, -20)
+resizeHandle.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+resizeHandle.Text = "◢"
+resizeHandle.TextColor3 = Color3.new(1,1,1)
+resizeHandle.TextScaled = true
+resizeHandle.Font = Enum.Font.SourceSansBold
+resizeHandle.ZIndex = 10
+resizeHandle.Parent = mainWindow
+
+local resizing = false
+local resizeStartMouse, resizeStartSize
+
+resizeHandle.MouseButton1Down:Connect(function(input)
+	resizing = true
+	resizeStartMouse = input.Position
+	resizeStartSize = mainWindow.AbsoluteSize
+	input:StopPropagation()
+end)
+
+-- 使用RenderStepped进行平滑调整
+local resizeConnection = RunService.RenderStepped:Connect(function()
+	if resizing then
+		local mousePos = UserInputService:GetMouseLocation()
+		local delta = mousePos - resizeStartMouse
+		local newWidth = math.max(250, resizeStartSize.X + delta.X)
+		local newHeight = math.max(350, resizeStartSize.Y + delta.Y)
+		mainWindow.Size = UDim2.new(0, newWidth, 0, newHeight)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		resizing = false
+	end
+end)
+
+-- ================= 内容滚动区域 =================
+local contentFrame = Instance.new("ScrollingFrame")
+contentFrame.Size = UDim2.new(1, -10, 1, -40)  -- 减去边距和标题栏
+contentFrame.Position = UDim2.new(0, 5, 0, 35)
+contentFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+contentFrame.BackgroundTransparency = 1
+contentFrame.ScrollBarThickness = 8
+contentFrame.CanvasSize = UDim2.new(0, 0, 0, 0)  -- 稍后设置
+contentFrame.Active = true
+contentFrame.Parent = mainWindow
+
+-- 当前Y偏移量
+local yOffset = 0
+
+-- 辅助函数：创建带标签的滑动条+输入框（无上限）
+local function createSliderInput(labelText, defaultValue, minVal, maxVal, onChange)
+	-- 标签
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -10, 0, 25)
+	label.Position = UDim2.new(0, 5, 0, yOffset)
+	label.Text = labelText
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.new(0, 0, 0)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextScaled = true
+	label.Font = Enum.Font.SourceSans
+	label.Parent = contentFrame
+	yOffset = yOffset + 25
+
+	-- 滑动条轨道
+	local track = Instance.new("TextButton")
+	track.Size = UDim2.new(0, 200, 0, 10)
+	track.Position = UDim2.new(0, 40, 0, yOffset)
+	track.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+	track.Text = ""
+	track.AutoButtonColor = false
+	track.Parent = contentFrame
+
+	-- 滑块
+	local thumb = Instance.new("TextButton")
+	thumb.Size = UDim2.new(0, 10, 0, 20)
+	thumb.Position = UDim2.new(0, 0, 0, -5)
+	thumb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	thumb.Text = ""
+	thumb.Parent = track
+
+	-- 数值输入框
+	local valueBox = Instance.new("TextBox")
+	valueBox.Size = UDim2.new(0, 60, 0, 25)
+	valueBox.Position = UDim2.new(0, 250, 0, yOffset-5)
+	valueBox.Text = tostring(defaultValue)
+	valueBox.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+	valueBox.TextColor3 = Color3.new(0,0,0)
+	valueBox.TextScaled = true
+	valueBox.Font = Enum.Font.SourceSans
+	valueBox.Parent = contentFrame
+
+	local currentValue = defaultValue
+	local min = minVal
+	local max = maxVal
+
+	local function updateValue(newVal)
+		newVal = tonumber(newVal) or defaultValue
+		currentValue = newVal
+		valueBox.Text = tostring(math.floor(newVal * 100) / 100)
+		local percent = (newVal - min) / (max - min)
+		percent = math.clamp(percent, 0, 1)
+		thumb.Position = UDim2.new(percent, -thumb.Size.X.Offset/2, 0, -5)
+		onChange(newVal)
+	end
+
+	-- 滑块拖动逻辑
+	local dragging = false
+	thumb.MouseButton1Down:Connect(function()
+		dragging = true
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+	track.MouseMoved:Connect(function(input)
+		if dragging then
+			local mousePos = UserInputService:GetMouseLocation()
+			local absPos = track.AbsolutePosition
+			local absSize = track.AbsoluteSize
+			local relativeX = math.clamp(mousePos.X - absPos.X, 0, absSize.X)
+			local percent = relativeX / absSize.X
+			local newVal = min + percent * (max - min)
+			updateValue(newVal)
+		end
+	end)
+
+	-- 输入框手动输入
+	valueBox.FocusLost:Connect(function()
+		local val = tonumber(valueBox.Text)
+		if val then
+			updateValue(val)
+		else
+			valueBox.Text = tostring(currentValue)
+		end
+	end)
+
+	yOffset = yOffset + 30
+	return valueBox
+end
+
+-- 存储变量
+local flySpeed = 50
+local spinSpeed = 100
+local spinEnabled = false
+local spinBody = nil
+
+-- 创建各个滑块
+createSliderInput("步行速度", 16, 0, 500, function(val)
+	if humanoid then humanoid.WalkSpeed = val end
+end)
+
+createSliderInput("跳跃高度", 50, 0, 500, function(val)
+	if humanoid then humanoid.JumpHeight = val end
+end)
+
+createSliderInput("飞行速度", 50, 0, 500, function(val)
+	flySpeed = val
+end)
+
+createSliderInput("旋转速度", 100, 0, 1000, function(val)
+	spinSpeed = val
+	if spinEnabled and spinBody then
+		spinBody.AngularVelocity = Vector3.new(0, spinSpeed, 0)
+	end
+end)
+
+createSliderInput("生命值", 100, 1, 500, function(val)
+	if humanoid then
+		if val > humanoid.MaxHealth then
+			humanoid.MaxHealth = val
+		end
+		humanoid.Health = val
+	end
+end)
+
+-- 旋转开关按钮
+local spinBtn = Instance.new("TextButton")
+spinBtn.Size = UDim2.new(0, 220, 0, 35)
+spinBtn.Position = UDim2.new(0, 15, 0, yOffset)
+spinBtn.Text = "🔁 旋转开关 (关)"
+spinBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+spinBtn.TextColor3 = Color3.new(0, 0, 0)
+spinBtn.TextScaled = true
+spinBtn.Font = Enum.Font.SourceSans
+spinBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+spinBtn.MouseButton1Click:Connect(function()
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	if not spinEnabled then
+		spinBody = Instance.new("BodyAngularVelocity")
+		spinBody.Name = "SpinForce"
+		spinBody.AngularVelocity = Vector3.new(0, spinSpeed, 0)
+		spinBody.MaxTorque = Vector3.new(0, math.huge, 0)
+		spinBody.P = 1250
+		spinBody.Parent = hrp
+		spinEnabled = true
+		spinBtn.Text = "🔁 旋转开关 (开)"
+	else
+		if spinBody and spinBody.Parent then
+			spinBody:Destroy()
+		end
+		spinBody = nil
+		spinEnabled = false
+		spinBtn.Text = "🔁 旋转开关 (关)"
+	end
+end)
+
+-- 天空盒输入框
+local skyInput = Instance.new("TextBox")
+skyInput.PlaceholderText = "输入天空盒 ID"
+skyInput.Size = UDim2.new(0, 220, 0, 35)
+skyInput.Position = UDim2.new(0, 15, 0, yOffset)
+skyInput.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+skyInput.TextColor3 = Color3.new(0, 0, 0)
+skyInput.TextScaled = true
+skyInput.Font = Enum.Font.SourceSans
+skyInput.Parent = contentFrame
+yOffset = yOffset + 45
+
+-- 应用天空盒按钮
+local applySkyBtn = Instance.new("TextButton")
+applySkyBtn.Size = UDim2.new(0, 220, 0, 35)
+applySkyBtn.Position = UDim2.new(0, 15, 0, yOffset)
+applySkyBtn.Text = "应用天空盒"
+applySkyBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+applySkyBtn.TextColor3 = Color3.new(0, 0, 0)
+applySkyBtn.TextScaled = true
+applySkyBtn.Font = Enum.Font.SourceSans
+applySkyBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+applySkyBtn.MouseButton1Click:Connect(function()
+	local inputID = skyInput.Text
+	if tonumber(inputID) then
+		local skyID = "rbxassetid://" .. inputID
+		local sky = Instance.new("Sky")
+		sky.SkyboxBk = skyID
+		sky.SkyboxDn = skyID
+		sky.SkyboxFt = skyID
+		sky.SkyboxLf = skyID
+		sky.SkyboxRt = skyID
+		sky.SkyboxUp = skyID
+		for _, obj in ipairs(Lighting:GetChildren()) do
+			if obj:IsA("Sky") then obj:Destroy() end
+		end
+		sky.Parent = Lighting
+	end
+end)
+
+-- FLING 按钮
+local flingBtn = Instance.new("TextButton")
+flingBtn.Size = UDim2.new(0, 220, 0, 35)
+flingBtn.Position = UDim2.new(0, 15, 0, yOffset)
+flingBtn.Text = "💥 甩人 (FLING)"
+flingBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+flingBtn.TextColor3 = Color3.new(0, 0, 0)
+flingBtn.TextScaled = true
+flingBtn.Font = Enum.Font.SourceSans
+flingBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+flingBtn.MouseButton1Click:Connect(function()
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	local spin = Instance.new("BodyAngularVelocity")
+	spin.AngularVelocity = Vector3.new(0, 100000, 0)
+	spin.MaxTorque = Vector3.new(0, math.huge, 0)
+	spin.P = 1250
+	spin.Parent = hrp
+	task.wait(2)
+	spin:Destroy()
+end)
+
+-- 无限生命按钮
+local infHealthBtn = Instance.new("TextButton")
+infHealthBtn.Size = UDim2.new(0, 220, 0, 35)
+infHealthBtn.Position = UDim2.new(0, 15, 0, yOffset)
+infHealthBtn.Text = "❤️ 无限生命"
+infHealthBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+infHealthBtn.TextColor3 = Color3.new(0, 0, 0)
+infHealthBtn.TextScaled = true
+infHealthBtn.Font = Enum.Font.SourceSans
+infHealthBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+infHealthBtn.MouseButton1Click:Connect(function()
+	if humanoid then
+		humanoid.MaxHealth = math.huge
+		humanoid.Health = math.huge
+	end
+end)
+
+-- 飞行功能
+local flying = false
+local flyConnection
+local upButton, downButton
+local autoRotateOriginal = true
+local faceCameraWhileFlying = false
+
+local flyBtn = Instance.new("TextButton")
+flyBtn.Size = UDim2.new(0, 220, 0, 35)
+flyBtn.Position = UDim2.new(0, 15, 0, yOffset)
+flyBtn.Text = "✈️ 飞行开关 (关)"
+flyBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+flyBtn.TextColor3 = Color3.new(0, 0, 0)
+flyBtn.TextScaled = true
+flyBtn.Font = Enum.Font.SourceSans
+flyBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+flyBtn.MouseButton1Click:Connect(function()
+	local char = player.Character or player.CharacterAdded:Wait()
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	flying = not flying
+	if flying then
+		if humanoid then
+			autoRotateOriginal = humanoid.AutoRotate
+			humanoid.AutoRotate = false
+		end
+
+		local bodyVel = Instance.new("BodyVelocity")
+		bodyVel.Name = "FlyForce"
+		bodyVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+		bodyVel.Velocity = Vector3.new(0, 0, 0)
+		bodyVel.Parent = hrp
+
+		-- 创建上下飞行按钮（直接放在gui下，始终可见）
+		upButton = Instance.new("TextButton")
+		upButton.Size = UDim2.new(0, 50, 0, 50)
+		upButton.Position = UDim2.new(0, 320, 0, 120)
+		upButton.Text = "▲"
+		upButton.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+		upButton.TextColor3 = Color3.new(0, 0, 0)
+		upButton.Parent = gui
+
+		downButton = Instance.new("TextButton")
+		downButton.Size = UDim2.new(0, 50, 0, 50)
+		downButton.Position = UDim2.new(0, 320, 0, 180)
+		downButton.Text = "▼"
+		downButton.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+		downButton.TextColor3 = Color3.new(0, 0, 0)
+		downButton.Parent = gui
+
+		local up = false
+		local down = false
+
+		upButton.MouseButton1Down:Connect(function()
+			up = true
+		end)
+		upButton.MouseButton1Up:Connect(function()
+			up = false
+		end)
+		downButton.MouseButton1Down:Connect(function()
+			down = true
+		end)
+		downButton.MouseButton1Up:Connect(function()
+			down = false
+		end)
+
+		-- 用于强力悬停的BodyPosition
+		local hoverPosition = nil
+
+		flyConnection = RunService.RenderStepped:Connect(function()
+			local camera = workspace.CurrentCamera
+			if not camera then return end
+
+			local hrp = bodyVel.Parent
+			if not hrp or not hrp:IsDescendantOf(workspace) then
+				flying = false
+				flyConnection:Disconnect()
+				return
+			end
+
+			local camCF = camera.CFrame
+			local forward = camCF.LookVector
+			local right = camCF.RightVector
+
+			local moveDir = Vector3.new()
+			local moving = false
+			if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+				moveDir = moveDir + forward
+				moving = true
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+				moveDir = moveDir - forward
+				moving = true
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+				moveDir = moveDir - right
+				moving = true
+			end
+			if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+				moveDir = moveDir + right
+				moving = true
+			end
+
+			if up then
+				moveDir = moveDir + Vector3.new(0, flySpeed, 0)
+				moving = true
+			end
+			if down then
+				moveDir = moveDir - Vector3.new(0, flySpeed, 0)
+				moving = true
+			end
+
+			if moveDir.Magnitude > 0 then
+				moveDir = moveDir.Unit * flySpeed
+			end
+
+			-- 强力悬停：无输入时锁定位置
+			if not moving then
+				if not hoverPosition then
+					hoverPosition = Instance.new("BodyPosition")
+					hoverPosition.Name = "HoverLock"
+					hoverPosition.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+					hoverPosition.P = 2000
+					hoverPosition.D = 100
+					hoverPosition.Position = hrp.Position
+					hoverPosition.Parent = hrp
+				else
+					hoverPosition.Position = hrp.Position  -- 持续锁定当前位置
+				end
+				-- 确保bodyVel不干扰
+				bodyVel.Velocity = Vector3.new(0,0,0)
+			else
+				if hoverPosition then
+					hoverPosition:Destroy()
+					hoverPosition = nil
+				end
+				bodyVel.Velocity = moveDir
+			end
+
+			-- 如果开启朝向摄像机，则设置角色方向为摄像机全角度
+			if faceCameraWhileFlying then
+				local camCF = camera.CFrame
+				hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + camCF.LookVector, camCF.UpVector)
+			end
+		end)
+
+		flyBtn.Text = "✈️ 飞行开关 (开)"
+	else
+		if flyConnection then
+			flyConnection:Disconnect()
+			flyConnection = nil
+		end
+		-- 清理可能残留的悬停锁定
+		if hrp and hrp:FindFirstChild("HoverLock") then
+			hrp.HoverLock:Destroy()
+		end
+		if hrp and hrp:FindFirstChild("FlyForce") then
+			hrp.FlyForce:Destroy()
+		end
+		if upButton then upButton:Destroy() upButton = nil end
+		if downButton then downButton:Destroy() downButton = nil end
+
+		if humanoid then
+			humanoid.AutoRotate = autoRotateOriginal
+		end
+
+		flyBtn.Text = "✈️ 飞行开关 (关)"
+	end
+end)
+
+-- 飞行时朝向摄像机开关按钮
+local faceCamBtn = Instance.new("TextButton")
+faceCamBtn.Size = UDim2.new(0, 220, 0, 35)
+faceCamBtn.Position = UDim2.new(0, 15, 0, yOffset)
+faceCamBtn.Text = "🧭 飞行时朝向摄像机 (关)"
+faceCamBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+faceCamBtn.TextColor3 = Color3.new(0, 0, 0)
+faceCamBtn.TextScaled = true
+faceCamBtn.Font = Enum.Font.SourceSans
+faceCamBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+faceCamBtn.MouseButton1Click:Connect(function()
+	faceCameraWhileFlying = not faceCameraWhileFlying
+	faceCamBtn.Text = "🧭 飞行时朝向摄像机 " .. (faceCameraWhileFlying and "(开)" or "(关)")
+end)
+
+-- 无碰撞功能（穿墙）
+local noclip = false
+local noclipConnection
+local noclipBtn = Instance.new("TextButton")
+noclipBtn.Size = UDim2.new(0, 220, 0, 35)
+noclipBtn.Position = UDim2.new(0, 15, 0, yOffset)
+noclipBtn.Text = "🚫 无碰撞开关 (关)"
+noclipBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+noclipBtn.TextColor3 = Color3.new(0, 0, 0)
+noclipBtn.TextScaled = true
+noclipBtn.Font = Enum.Font.SourceSans
+noclipBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+noclipBtn.MouseButton1Click:Connect(function()
+	noclip = not noclip
+	if noclip then
+		noclipConnection = RunService.Stepped:Connect(function()
+			if player.Character then
+				for _, part in pairs(player.Character:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.CanCollide = false
+					end
+				end
+			end
+		end)
+		noclipBtn.Text = "🚫 无碰撞开关 (开)"
+	else
+		if noclipConnection then
+			noclipConnection:Disconnect()
+			noclipConnection = nil
+		end
+		if player.Character then
+			for _, part in pairs(player.Character:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.CanCollide = true
+				end
+			end
+		end
+		noclipBtn.Text = "🚫 无碰撞开关 (关)"
+	end
+end)
+
+-- 生成克隆
+local cloneBtn = Instance.new("TextButton")
+cloneBtn.Size = UDim2.new(0, 220, 0, 35)
+cloneBtn.Position = UDim2.new(0, 15, 0, yOffset)
+cloneBtn.Text = "👥 生成克隆"
+cloneBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+cloneBtn.TextColor3 = Color3.new(0, 0, 0)
+cloneBtn.TextScaled = true
+cloneBtn.Font = Enum.Font.SourceSans
+cloneBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+cloneBtn.MouseButton1Click:Connect(function()
+	local char = player.Character
+	if not char then return end
+	for _, existingClone in pairs(workspace:GetChildren()) do
+		if existingClone.Name == player.Name .. "_loccal" then
+			existingClone:Destroy()
+		end
+	end
+	local clone = char:Clone()
+	clone.Name = player.Name .. "_loccal"
+	clone.Parent = workspace
+	local hrp = clone:FindFirstChild("HumanoidRootPart")
+	if hrp and char:FindFirstChild("HumanoidRootPart") then
+		hrp.CFrame = char.HumanoidRootPart.CFrame * CFrame.new(5, 0, 0)
+	end
+	for _, obj in pairs(clone:GetDescendants()) do
+		if obj:IsA("Script") or obj:IsA("LocalScript") then
+			obj:Destroy()
+		elseif obj:IsA("Humanoid") then
+			obj.PlatformStand = true
+			obj.AutoRotate = false
+		end
+	end
+end)
+
+-- 关闭 GUI 按钮
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 220, 0, 35)
+closeBtn.Position = UDim2.new(0, 15, 0, yOffset)
+closeBtn.Text = "❌ 关闭 GUI"
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 200)
+closeBtn.TextColor3 = Color3.new(0, 0, 0)
+closeBtn.TextScaled = true
+closeBtn.Font = Enum.Font.SourceSans
+closeBtn.Parent = contentFrame
+yOffset = yOffset + 45
+
+closeBtn.MouseButton1Click:Connect(function()
+	gui:Destroy()
+end)
+
+-- 设置滚动区域画布大小
+contentFrame.CanvasSize = UDim2.new(0, 0, 0, yOffset + 20)
+
+-- 清理连接（可选，但保留不影响）
+-- 当gui销毁时，所有连接会自动断开，因为对象被销毁
